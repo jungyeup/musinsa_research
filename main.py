@@ -40,12 +40,11 @@ def extract_discount_rate(rate_text):
 def get_product_info(driver, category, user_brand_name):
     products = []
     unique_prices = set()
-    xpath = "//div[@class='brandshop-product__info']"
 
     try:
-        elements = driver.find_elements(By.XPATH, xpath)
+        product_elements = driver.find_elements(By.XPATH, "//div[contains(@class, 'sc-widb61-1 leHifG')]")
 
-        if not elements:
+        if not product_elements:
             products.append({
                 "Category": category,
                 "Brand Name": user_brand_name,
@@ -57,35 +56,45 @@ def get_product_info(driver, category, user_brand_name):
             print(f"No products found for brand {user_brand_name} and category {category}.")
             return products
 
-        for element in elements:
+        for element in product_elements:
+            # 상품명
             try:
-                product_name = element.find_element(By.CLASS_NAME, 'brandshop-product__info__name.ampl-catch-click').text
+                product_name = element.find_element(By.XPATH, ".//span[contains(@class, 'sc-dIMoHT')]").text
             except NoSuchElementException:
                 product_name = "N/A"
 
+            # 실제 판매 가격
             try:
-                price_text = element.find_element(By.CLASS_NAME, 'brandshop-product__price__sale').text
-                actual_sale_price = extract_price(price_text)
+                sale_price_text = element.find_element(By.XPATH, ".//span[contains(@class, 'sc-fWnslK') and not(contains(@class, 'text-red'))]").text
+                actual_sale_price = extract_price(sale_price_text)
             except NoSuchElementException:
                 actual_sale_price = None
-                
+
             if actual_sale_price in unique_prices:
                 continue
             unique_prices.add(actual_sale_price)
 
+            # 할인율 존재 여부 체크
             try:
-                price_ori_text = element.find_element(By.CLASS_NAME, 'brandshop-product__price__origin').text
-                original_price = extract_price(price_ori_text)
-            except NoSuchElementException:
-                original_price = None
-
-            try:
-                discount_rate_text = element.find_element(By.CLASS_NAME, 'brandshop-product__price__off').text
+                discount_rate_text = element.find_element(By.XPATH, ".//span[contains(@class, 'sc-fWnslK') and contains(@class, 'text-red')]").text
                 discount_rate = extract_discount_rate(discount_rate_text)
             except NoSuchElementException:
                 discount_rate = None
 
-            if discount_rate is None and actual_sale_price is not None:
+            # 원래 가격(정가) 설정
+            original_price = None
+            if discount_rate is not None:
+                try:
+                    # 정가와 할인가가 같이 표시될 경우, 실제 판매가 다음에 있는 가격이 정가로 간주됩니다.
+                    price_elements = element.find_elements(By.XPATH, ".//span[contains(@class, 'sc-fWnslK')]")
+                    for price_el in price_elements:
+                        price = price_el.text
+                        if price and price != sale_price_text and '원' in price:
+                            original_price = extract_price(price)
+                            break
+                except NoSuchElementException:
+                    original_price = actual_sale_price
+            else:
                 original_price = actual_sale_price
 
             products.append({
@@ -96,6 +105,7 @@ def get_product_info(driver, category, user_brand_name):
                 "Discount Rate": discount_rate,
                 "Actual Sale Price": actual_sale_price
             })
+
     except Exception as e:
         print(f"Error occurred while fetching product info: {e}")
         print(traceback.format_exc())
@@ -195,10 +205,16 @@ def plot_bar_chart(data, category, filename):
     brands = data['Brand Name'].unique()
     index = range(len(brands))
 
-    original_prices = [data[(data['Brand Name'] == brand) & (data['Metric'].str.contains('Original Price'))]['Avg'].values[0] 
-                    for brand in brands]
-    actual_prices = [data[(data['Brand Name'] == brand) & (data['Metric'].str.contains('Actual Sale Price'))]['Avg'].values[0] 
-                    for brand in brands]
+    original_prices = [
+        data[(data['Brand Name'] == brand) & (data['Metric'].str.contains('Original Price'))]['Avg'].values[0]
+        if not data[(data['Brand Name'] == brand) & (data['Metric'].str.contains('Original Price'))].empty else 0
+        for brand in brands
+    ]
+    actual_prices = [
+        data[(data['Brand Name'] == brand) & (data['Metric'].str.contains('Actual Sale Price'))]['Avg'].values[0]
+        if not data[(data['Brand Name'] == brand) & (data['Metric'].str.contains('Actual Sale Price'))].empty else 0
+        for brand in brands
+    ]
 
     plt.bar(index, original_prices, width=0.4, label='Original Price', align='center')
     plt.bar(index, actual_prices, width=0.4, label='Actual Sale Price', align='edge')
